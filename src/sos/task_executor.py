@@ -425,6 +425,7 @@ def _execute_task(task_id, verbosity=None, runmode='run', sigmode=None, monitor_
         sos_dict['start_time'] = time.time()
 
     try:
+        orig_dir = os.getcwd()
         # go to 'workdir'
         if '_runtime' in sos_dict and 'workdir' in sos_dict['_runtime']:
             if not os.path.isdir(os.path.expanduser(sos_dict['_runtime']['workdir'])):
@@ -435,15 +436,13 @@ def _execute_task(task_id, verbosity=None, runmode='run', sigmode=None, monitor_
                         sos_dict['_runtime']['workdir']))
                 except Exception as e:
                     # sometimes it is not possible to go to a "workdir" because of
-                    # file system differences, but this should be ok if a work_dir
+                    # file system differences, but this should be ok if a workdir
                     # has been specified.
-                    env.logger.debug(
-                        f'Failed to create workdir {sos_dict["_runtime"]["workdir"]}: {e}')
+                    raise RuntimeError(
+                        f'Failed to switch to workdir {sos_dict["_runtime"]["workdir"]}: {e}')
             else:
                 os.chdir(os.path.expanduser(sos_dict['_runtime']['workdir']))
         #
-        orig_dir = os.getcwd()
-
         # we will need to check existence of targets because the task might
         # be executed on a remote host where the targets are not available.
         for target in (sos_dict['_input'] if isinstance(sos_dict['_input'], list) else []) + \

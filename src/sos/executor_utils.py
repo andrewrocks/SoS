@@ -17,7 +17,7 @@ from collections import Sequence
 from io import StringIO
 from tokenize import generate_tokens
 
-from .targets import (RemovedTarget, file_target, sos_targets, sos_step,
+from .targets import (RemovedTarget, file_target, sos_targets, sos_step, path,
     dynamic, sos_variable, RuntimeInfo, textMD5)
 from .utils import env, format_HHMMSS, expand_size, load_config_files
 from .eval import SoS_eval, stmtHash, analyze_global_statements
@@ -175,10 +175,16 @@ def statementMD5(stmts):
     return textMD5(' '.join(tokens))
 
 def create_task(global_def, global_vars, task_stmt, task_params):
-    env.sos_dict.set('_runtime', {})
+    if 'TASK' in env.config['SOS_DEBUG']:
+        env.log_to_file('TASK', f"Creating task for queue {env.sos_dict['_runtime']['queue']}")
     if task_params:
+        # getting the workdir etc for remote host
+        local_host = env.sos_dict.pop('__host__')
+        env.sos_dict['__host__'] = env.sos_dict['_runtime']['queue']
         args, kwargs = SoS_eval(f'__null_func__({task_params})',
             extra_dict={'__null_func__': __null_func__})
+        env.sos_dict['__host__'] = local_host
+
         if args:
             raise RuntimeError(f'Only keyword arguments are accepted for task statement: "{task_params}" provided')
         for k, v in kwargs.items():
@@ -189,6 +195,9 @@ def create_task(global_def, global_vars, task_stmt, task_params):
                 v = format_HHMMSS(v)
             elif k == 'mem':
                 v = expand_size(v)
+            elif k == 'queue':
+                # already set
+                pass
             env.sos_dict['_runtime'][k] = v
     #
     # prepare task variables
@@ -200,6 +209,22 @@ def create_task(global_def, global_vars, task_stmt, task_params):
         'sig_mode', 'default')
     env.sos_dict['_runtime']['run_mode'] = env.config.get(
         'run_mode', 'run')
+    if 'workdir' not in env.sos_dict['_runtime']:
+        cwd = path.cwd()
+        common_names = [x for x in path.names() if x in path.names(host=env.sos_dict['_runtime']['queue'])]
+        for name in common_names:
+            try:
+                cwd.relative_to(path(name=name))
+                cwd = path(name="name", host=env.sos_dict['_runtime']['queue']) + str(path(name=name))[len(str(cwd)):]
+                if 'TASK' in env.config['SOS_DEBUG']:
+                    env.log_to_file('TASK', f'Using remote workdir {cwd}')
+                break
+            except:
+                pass
+        env.sos_dict['_runtime']['workdir'] = cwd
+    elif 'TASK' in env.config['SOS_DEBUG']:
+        env.log_to_file('TASK', f'Using specified workdir {env.sos_dict["_runtime"]["workdir"]}')
+
 
     # NOTE: we do not explicitly include 'step_input', 'step_output',
     # 'step_depends' and 'CONFIG'
