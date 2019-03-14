@@ -425,23 +425,24 @@ def _execute_task(task_id, verbosity=None, runmode='run', sigmode=None, monitor_
         sos_dict['start_time'] = time.time()
 
     try:
-        orig_dir = os.getcwd()
-        # go to 'workdir'
-        if '_runtime' in sos_dict and 'workdir' in sos_dict['_runtime']:
-            if not os.path.isdir(os.path.expanduser(sos_dict['_runtime']['workdir'])):
+
+        # go to 'cur_dir'
+        if '_runtime' in sos_dict and 'cur_dir' in sos_dict['_runtime']:
+            if not os.path.isdir(os.path.expanduser(sos_dict['_runtime']['cur_dir'])):
                 try:
                     os.makedirs(os.path.expanduser(
-                        sos_dict['_runtime']['workdir']))
+                        sos_dict['_runtime']['cur_dir']))
                     os.chdir(os.path.expanduser(
-                        sos_dict['_runtime']['workdir']))
+                        sos_dict['_runtime']['cur_dir']))
                 except Exception as e:
-                    # sometimes it is not possible to go to a "workdir" because of
-                    # file system differences, but this should be ok if a workdir
+
+                    # sometimes it is not possible to go to a "cur_dir" because of
+                    # file system differences, but this should be ok if a work_dir
                     # has been specified.
-                    raise RuntimeError(
-                        f'Failed to switch to workdir {sos_dict["_runtime"]["workdir"]}: {e}')
+                    env.logger.debug(
+                        f'Failed to create cur_dir {sos_dict["_runtime"]["cur_dir"]}: {e}')
             else:
-                os.chdir(os.path.expanduser(sos_dict['_runtime']['workdir']))
+                os.chdir(os.path.expanduser(sos_dict['_runtime']['cur_dir']))
         #
         # we will need to check existence of targets because the task might
         # be executed on a remote host where the targets are not available.
@@ -534,4 +535,7 @@ def _execute_task(task_id, verbosity=None, runmode='run', sigmode=None, monitor_
     finally:
         os.chdir(orig_dir)
 
+    # the final result should be relative to cur_dir, not workdir
+    # because output is defined outside of task. This is the only place
+    # when signature matters (worth saving)
     return collect_task_result(task_id, sos_dict, signature=sig)
