@@ -191,8 +191,6 @@ def create_task(global_def, global_vars, task_stmt, task_params):
                 v = expand_size(v)
             env.sos_dict['_runtime'][k] = v
     #
-    # prepare task variables
-    env.sos_dict['_runtime']['cur_dir'] = os.getcwd()
     # we need to record the verbosity and sigmode of task during creation because
     # they might be changed while the task is in the queue waiting to be
     # submitted (this happens when tasks are submitted from Jupyter)
@@ -201,7 +199,6 @@ def create_task(global_def, global_vars, task_stmt, task_params):
         'sig_mode', 'default')
     env.sos_dict['_runtime']['run_mode'] = env.config.get(
         'run_mode', 'run')
-    env.sos_dict['_runtime']['home_dir'] = os.path.expanduser('~')
 
     # NOTE: we do not explicitly include 'step_input', 'step_output',
     # 'step_depends' and 'CONFIG'

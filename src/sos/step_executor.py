@@ -108,7 +108,7 @@ class TaskManager:
             for _, (task_id, taskdef, _) in slot:
                 master.push(task_id, taskdef)
             ids.append(master.ID)
-            TaskFile(master.ID).save(master.finalize())
+            TaskFile(master.ID).save(master.finalize(), self.step.task_params)
             send_message_to_controller(['workflow_sig', 'task', master.ID,
                                   f"{{'creation_time': {time.time()}}}"])
         self._unsubmitted_slots = []
@@ -129,7 +129,7 @@ class TaskManager:
             for task_id, taskdef, _ in to_be_submitted:
                 # if the task file, perhaps it is already running, we do not change
                 # the task file. Otherwise we are changing the status of the task
-                TaskFile(task_id).save(taskdef)
+                TaskFile(task_id).save(taskdef, self.step.task_params)
                 send_message_to_controller(['workflow_sig', 'task', task_id,
                                           f"{{'creation_time': {time.time()}}}"])
                 ids.append(task_id)
@@ -138,7 +138,7 @@ class TaskManager:
             for task_id, taskdef, _ in to_be_submitted:
                 if master is not None and master.num_tasks() == self.trunk_size:
                     ids.append(master.ID)
-                    TaskFile(master.ID).save(master)
+                    TaskFile(master.ID).save(master, self.step.task_params)
                     send_message_to_controller(['workflow_sig', 'task', master.ID,
                                                 f"{{'creation_time': {time.time()}}}"])
                     master = None
@@ -147,7 +147,7 @@ class TaskManager:
                 master.push(task_id, taskdef)
             # the last piece
             if master is not None:
-                TaskFile(master.ID).save(master.finalize())
+                TaskFile(master.ID).save(master.finalize(), self.step.task_params)
                 send_message_to_controller(['workflow_sig', 'task', master.ID,
                                           f"{{'creation_time': {time.time()}}}"])
                 ids.append(master.ID)

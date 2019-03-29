@@ -210,7 +210,7 @@ class TaskFile(object):
             os.path.expanduser('~'), '.sos', 'tasks', task_id + '.task'
         )
 
-    def save(self, params):
+    def save(self, params, runtime_params):
         if os.path.isfile(self.task_file):
             if self.status == 'running':
                 env.logger.debug('Running task {self.task_file} is not updated')
@@ -227,6 +227,9 @@ class TaskFile(object):
         # tags is not saved in params
         del params.tags
         params_block = lzma.compress(pickle.dumps(params))
+        runtime = {'_runtime': {}, 'params': runtime_params}
+        runtime.update(params.sos_dict['_runtime'])
+        runtime_block = lzma.compress(pickle.dumps(runtime))
         #env.logger.error(f'saving {self.task_id} params of size {len(params_block)}')
         header = self.TaskHeader(
             version=3,
@@ -240,7 +243,7 @@ class TaskFile(object):
             failed_time=0,
             completed_time=0,
             params_size=len(params_block),
-            runtime_size=0,
+            runtime_size=len(runtime_block),
             shell_size=0,
             pulse_size=0,
             stdout_size=0,
@@ -254,6 +257,7 @@ class TaskFile(object):
             with open(self.task_file, 'wb+') as fh:
                 self._write_header(fh, header)
                 fh.write(params_block)
+                fh.write(runtime_block)
 
     def exists(self):
         return os.path.isfile(self.task_file)

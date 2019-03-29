@@ -152,38 +152,45 @@ class LocalHost:
             raise ValueError(f'Missing task definition {task_file}')
 
         tf = TaskFile(task_id)
-        params = tf.params
-        # clear possible previous result
-        task_vars = params.sos_dict
-        runtime = {'_runtime': {}}
+        runtime = tf.runtime
+        if runtime:
+            runtime_updated = False
+        else:
+            # if runtime is empty, it is an old task file where runtime is saved with sos_dict
+            params = tf.params
+            # clear possible previous result
+            runtime = {'_runtime': {}}
+            runtime['_runtime'].update(params.sos_dict['_runtime'])
+            runtime_updated = True
 
         if 'max_mem' in self.config or 'max_cores' in self.config or 'max_walltime' in self.config:
             for key in ('max_mem', 'max_cores', 'max_walltime'):
                 if key in self.config:
+                    runtime_updated = True
                     runtime['_runtime'][key] = format_HHMMSS(self.config[key]) if key == 'max_walltime' else self.config[key]
 
-            if self.config.get('max_mem', None) is not None and task_vars['_runtime'].get('mem', None) is not None \
-                    and self.config['max_mem'] < task_vars['_runtime']['mem']:
+            if self.config.get('max_mem', None) is not None and runtime['_runtime'].get('mem', None) is not None \
+                    and self.config['max_mem'] < runtime['_runtime']['mem']:
                 env.logger.error(
-                    f'Task {task_id} requested more mem ({task_vars["_runtime"]["mem"]}) than allowed max_mem ({self.config["max_mem"]})')
+                    f'Task {task_id} requested more mem ({runtime["_runtime"]["mem"]}) than allowed max_mem ({self.config["max_mem"]})')
                 return False
-            if self.config.get('max_cores', None) is not None and task_vars['_runtime'].get('cores', None) is not None \
-                    and self.config['max_cores'] < task_vars['_runtime']['cores']:
+            if self.config.get('max_cores', None) is not None and runtime['_runtime'].get('cores', None) is not None \
+                    and self.config['max_cores'] < runtime['_runtime']['cores']:
                 env.logger.error(
-                    f'Task {task_id} requested more cores ({task_vars["_runtime"]["cores"]}) than allowed max_cores ({self.config["max_cores"]})')
+                    f'Task {task_id} requested more cores ({runtime["_runtime"]["cores"]}) than allowed max_cores ({self.config["max_cores"]})')
                 return False
-            if self.config.get('max_walltime', None) is not None and task_vars['_runtime'].get('walltime', None) is not None \
-                    and expand_time(self.config['max_walltime']) < expand_time(task_vars['_runtime']['walltime']):
+            if self.config.get('max_walltime', None) is not None and runtime['_runtime'].get('walltime', None) is not None \
+                    and expand_time(self.config['max_walltime']) < expand_time(runtime['_runtime']['walltime']):
                 env.logger.error(
-                    f'Task {task_id} requested more walltime ({task_vars["_runtime"]["walltime"]}) than allowed max_walltime ({self.config["max_walltime"]})')
+                    f'Task {task_id} requested more walltime ({runtime["_runtime"]["walltime"]}) than allowed max_walltime ({self.config["max_walltime"]})')
                 return False
 
-        if len(runtime) > 1 or runtime['_runtime']:
+        if runtime_updated:
             tf.runtime = runtime
         tf.status = 'pending'
         #
-        if 'to_host' in task_vars['_runtime'] and isinstance(task_vars['_runtime']['to_host'], dict):
-            for l, r in task_vars['_runtime']['to_host'].items():
+        if 'to_host' in runtime['_runtime'] and isinstance(runtime['_runtime']['to_host'], dict):
+            for l, r in runtime['_runtime']['to_host'].items():
                 if l != r:
                     shutil.copy(l, r)
         self.send_task_file(task_file)
@@ -509,23 +516,31 @@ class RemoteHost:
             '~'), '.sos', 'tasks', task_id + '.task')
         if not os.path.isfile(task_file):
             raise ValueError(f'Missing task definition {task_file}')
-        tf = TaskFile(task_id)
-        params = tf.params
-        task_vars = params.sos_dict
-        runtime = {'_runtime': {}}
 
-        if self.config.get('max_mem', None) is not None and task_vars['_runtime'].get('mem', None) is not None \
-                and self.config['max_mem'] < task_vars['_runtime']['mem']:
+        tf = TaskFile(task_id)
+        runtime = tf.runtime
+        if runtime:
+            runtime_updated = False
+        else:
+            # if runtime is empty, it is an old task file where runtime is saved with sos_dict
+            params = tf.params
+            # clear possible previous result
+            runtime = {'_runtime': {}}
+            runtime['_runtime'].update(params.sos_dict['_runtime'])
+            runtime_updated = True
+
+        if self.config.get('max_mem', None) is not None and runtime['_runtime'].get('mem', None) is not None \
+                and self.config['max_mem'] < runtime['_runtime']['mem']:
             raise ValueError(
-                f'Task {task_id} requested more mem ({task_vars["_runtime"]["mem"]}) than allowed max_mem ({self.config["max_mem"]})')
-        if self.config.get('max_cores', None) is not None and task_vars['_runtime'].get('cores', None) is not None \
-                and self.config['max_cores'] < task_vars['_runtime']['cores']:
+                f'Task {task_id} requested more mem ({runtime["_runtime"]["mem"]}) than allowed max_mem ({self.config["max_mem"]})')
+        if self.config.get('max_cores', None) is not None and runtime['_runtime'].get('cores', None) is not None \
+                and self.config['max_cores'] < runtime['_runtime']['cores']:
             raise ValueError(
-                f"Task {task_id} requested more cores ({task_vars['_runtime']['cores']}) than allowed max_cores ({self.config['max_cores']})")
-        if self.config.get('max_walltime', None) is not None and task_vars['_runtime'].get('walltime', None) is not None \
-                and expand_time(self.config['max_walltime']) < expand_time(task_vars['_runtime']['walltime']):
+                f"Task {task_id} requested more cores ({runtime['_runtime']['cores']}) than allowed max_cores ({self.config['max_cores']})")
+        if self.config.get('max_walltime', None) is not None and runtime['_runtime'].get('walltime', None) is not None \
+                and expand_time(self.config['max_walltime']) < expand_time(runtime['_runtime']['walltime']):
             raise ValueError(
-                f'Task {task_id} requested more walltime ({task_vars["_runtime"]["walltime"]}) than allowed max_walltime ({self.config["max_walltime"]})')
+                f'Task {task_id} requested more walltime ({runtime["_runtime"]["walltime"]}) than allowed max_walltime ({self.config["max_walltime"]})')
 
         if task_vars['_input'] and not isinstance(task_vars['_input'], Undetermined):
             env.logger.info(
@@ -535,55 +550,26 @@ class RemoteHost:
             env.logger.info(
                 f'{task_id} ``sending`` {short_repr(task_vars["_depends"])}')
             self.send_to_host(task_vars['_depends'])
-        if 'to_host' in task_vars['_runtime']:
+        if 'to_host' in runtime['_runtime']:
             env.logger.info(
-                f'{task_id} ``sending`` {short_repr(task_vars["_runtime"]["to_host"])}')
-            self.send_to_host(task_vars['_runtime']['to_host'])
+                f'{task_id} ``sending`` {short_repr(runtime["_runtime"]["to_host"])}')
+            self.send_to_host(runtime['_runtime']['to_host'])
 
         # map variables
-        if 'workdir' not in task_vars['_runtime']:
+        if 'workdir' not in runtime['_runtime']:
             runtime['_runtime']['workdir'] = self._map_var(os.getcwd())
-        # for backward compatibility #1244
-        runtime['_runtime']['cur_dir'] = runtime['_runtime']['workdir']
-        runtime['_runtime']['home_dir'] = self._map_var(os.path.expanduser('~'))
 
         mapped_vars = {'_input', '_output',
                        '_depends', 'input', 'output', 'depends'}
-        if 'mapp_vars' in task_vars['_runtime']:
-            if isinstance(task_vars['_runtime']['mapped_vars_vars'], str):
-                mapped_vars.add(task_vars['_runtime']['mapped_vars_vars'])
-            elif isinstance(task_vars['_runtime']['mapped_vars_vars'], (set, Sequence)):
-                mapped_vars |= set(task_vars['_runtime']['mapped_vars_vars'])
-            else:
-                raise ValueError(
-                    f'Unacceptable value for runtime option mapped_vars_vars: {task_vars["_runtime"]["mapped_vars_vars"]}')
-
-        for var in mapped_vars:
-            if var not in task_vars:
-                # input, output, depends might not exist
-                continue
-            if not task_vars[var]:
-                continue
-            elif isinstance(task_vars[var], str):
-                runtime[var] = self._map_var(task_vars[var])
-                env.log_to_file('TASK',
-                    f'On {self.alias}: ``{var}`` = {short_repr(task_vars[var])}')
-            elif isinstance(task_vars[var], (Sequence, set)):
-                runtime[var] = type(task_vars[var])(
-                    self._map_var(task_vars[var]))
-                env.log_to_file('TASK',
-                    f'On {self.alias}: ``{var}`` = {short_repr(task_vars[var])}')
-            else:
-                env.logger.warning(
-                    f'Failed to map {var} of type {task_vars[var].__class__.__name__}')
 
         # server restrictions #488
         for key in ('max_mem', 'max_cores', 'max_walltime'):
             if key in self.config:
+                runtime_updated = True
                 runtime['_runtime'][key] = format_HHMMSS(self.config[key]) if key == 'max_walltime' else self.config[key]
 
         # only update task file if there are runtime information
-        if len(runtime) > 1 or runtime['_runtime']:
+        if runtime_updated:
             tf.runtime = runtime
         tf.status = 'pending'
         self.send_task_file(task_file)
