@@ -7,6 +7,7 @@ import fasteners
 import pickle
 import time
 import lzma
+import zstandard as zstd
 import struct
 from enum import Enum
 from collections import namedtuple
@@ -192,17 +193,30 @@ class TaskFile(object):
                         'tags'
                         )
 
-    TaskHeader = TaskHeader_v3
+    # use of different compression algorithm
+    TaskHeader_v4 = namedtuple('TaskHeader',
+                        'version status last_modified '
+                        'new_time pending_time submitted_time running_time aborted_time failed_time completed_time '
+                        'params_size runtime_size shell_size pulse_size stdout_size stderr_size result_size signature_size '
+                        'tags'
+                        )
+
+    TaskHeader = TaskHeader_v4
 
     header_fmt_v1 = '!2h 8d 6i 128s'
     header_fmt_v2 = '!2h 8d 7i 124s'
     header_fmt_v3 = '!2h 8d 8i 120s'
+    header_fmt_v4 = '!2h 8d 8i 120s'
 
-    header_fmt = header_fmt_v3
+    header_fmt = header_fmt_v4
 
     header_size = 220  # struct.calcsize(header_fmt)
     tags_offset = [92, 96, 100]  # struct.calcsize(status_fmt + '6i')
     tags_size = [128, 124, 120]
+
+    # class level compressor to avoid recreation of this object repeatedly
+    compressor = zstd.ZstdCompressor()
+    decompressor = zstd.ZstdDecompressor()
 
     def __init__(self, task_id: str):
         self.task_id = task_id
@@ -226,10 +240,10 @@ class TaskFile(object):
         tags = params.tags
         # tags is not saved in params
         del params.tags
-        params_block = lzma.compress(pickle.dumps(params))
+        params_block = self.compressor.compress(pickle.dumps(params))
         #env.logger.error(f'saving {self.task_id} params of size {len(params_block)}')
         header = self.TaskHeader(
-            version=3,
+            version=4,
             status=TaskStatus.new.value,
             last_modified=now,
             new_time=now,
@@ -263,7 +277,7 @@ class TaskFile(object):
         header = self._read_header(fh)
         now = time.time()
         header = header._replace(
-            version=2,
+            version=4,
             status=TaskStatus.new.value,
             last_modified=now,
             new_time=now,
@@ -294,23 +308,25 @@ class TaskFile(object):
     def _read_header(self, fh):
         fh.seek(0, 0)
         data = fh.read(self.header_size)
-        if struct.unpack('!h', data[:2])[0] == 1:
+        file_version = struct.unpack('!h', data[:2])[0]
+        if file_version == 1:
             header = self.TaskHeader_v1._make(struct.unpack(
                 self.header_fmt_v1, data))
-            if header.version not in (1, 2, 3):
+            if header.version not in (1, 2, 3, 4):
                 raise RuntimeError(
                     f'Corrupted task file {self.task_file}. Please report a bug if you can reproduce the generation of this file.')
             return self.TaskHeader(runtime_size=0, shell_size=0, **header._asdict())._replace(version=3)
-        if struct.unpack('!h', data[:2])[0] == 2:
+        if file_version == 2:
             header = self.TaskHeader_v2._make(struct.unpack(
                 self.header_fmt_v2, data))
-            if header.version not in (1, 2, 3):
+            if header.version not in (1, 2, 3, 4):
                 raise RuntimeError(
                     f'Corrupted task file {self.task_file}. Please report a bug if you can reproduce the generation of this file.')
             return self.TaskHeader(runtime_size=0, **header._asdict())._replace(version=3)
+        # file_version == 3 has the same header structure as version 4
         header = self.TaskHeader._make(struct.unpack(
             self.header_fmt, data))
-        if header.version not in (1, 2, 3):
+        if header.version not in (1, 2, 3, 4):
             raise RuntimeError(
                 f'Corrupted task file {self.task_file}. Please report a bug if you can reproduce the generation of this file.')
         return header
@@ -325,7 +341,7 @@ class TaskFile(object):
             return b''
         with open(filename, 'rb') as fh:
             content = fh.read()
-        return lzma.compress(content)
+        return self.compressor.compress(content)
 
     def add_outputs(self, keep_result=False):
         # get header
@@ -374,7 +390,7 @@ class TaskFile(object):
                     fh.write(signature)
 
     def add_result(self, result: dict):
-        result_block = lzma.compress(pickle.dumps(result))
+        result_block = self.compressor.compress(pickle.dumps(result))
         with fasteners.InterProcessLock(os.path.join(env.temp_dir, self.task_id + '.lck')):
             with open(self.task_file, 'r+b') as fh:
                 header = self._read_header(fh)
@@ -388,7 +404,7 @@ class TaskFile(object):
                 fh.write(result_block)
 
     def add_signature(self, signature: dict):
-        signature_block = lzma.compress(pickle.dumps(signature))
+        signature_block = self.compressor.compress(pickle.dumps(signature))
         with fasteners.InterProcessLock(os.path.join(env.temp_dir, self.task_id + '.lck')):
             with open(self.task_file, 'r+b') as fh:
                 header = self._read_header(fh)
@@ -439,13 +455,13 @@ class TaskFile(object):
                 return {}
             else:
                 try:
-                    return pickle.loads(lzma.decompress(fh.read(header.params_size)))
+                    return pickle.loads((self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.params_size)))
                 except Exception as e:
                     raise RuntimeError(f'Failed to obtain params of task {self.task_id}: {e}')
 
 
     def _set_params(self, params):
-        params_block = lzma.compress(pickle.dumps(params))
+        params_block = self.compressor.compress(pickle.dumps(params))
         #env.logger.error(f'updating {self.task_id} params of size {len(params_block)}')
         with fasteners.InterProcessLock(os.path.join(env.temp_dir, self.task_id + '.lck')):
             with open(self.task_file, 'r+b') as fh:
@@ -492,13 +508,13 @@ class TaskFile(object):
                 return {}
             fh.seek(self.header_size + header.params_size, 0)
             try:
-                return pickle.loads(lzma.decompress(fh.read(header.runtime_size)))
+                return pickle.loads((self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.runtime_size)))
             except Exception as e:
                 env.logger.error(f'Failed to obtain runtime of task {self.task_id}: {e}')
                 return {'_runtime': {}}
 
     def _set_runtime(self, runtime):
-        runtime_block = lzma.compress(pickle.dumps(runtime))
+        runtime_block = self.compressor.compress(pickle.dumps(runtime))
         #env.logger.error(f'updating {self.task_id} params of size {len(params_block)}')
         with fasteners.InterProcessLock(os.path.join(env.temp_dir, self.task_id + '.lck')):
             with open(self.task_file, 'r+b') as fh:
@@ -547,15 +563,13 @@ class TaskFile(object):
                 params = {}
             else:
                 try:
-                    params = pickle.loads(lzma.decompress(fh.read(header.params_size)))
+                    params = pickle.loads((self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.params_size)))
                 except Exception as e:
                     env.logger.error(f'Failed to obtain params with runtime of task {self.task_id}: {e}')
                     params = {}
-            if '_runtime' not in params.sos_dict:
-                params.sos_dict['_runtime'] = {}
             if header.runtime_size > 0:
                 try:
-                    runtime = pickle.loads(lzma.decompress(fh.read(header.runtime_size)))
+                    runtime = pickle.loads((self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.runtime_size)))
                 except Exception as e:
                     env.logger.error(f'Failed to obtain runtime of task {self.task_id}: {e}')
                     runtime = {'_runtime': {}}
@@ -666,7 +680,7 @@ class TaskFile(object):
                 return ''
             fh.seek(self.header_size + header.params_size + header.runtime_size, 0)
             try:
-                return lzma.decompress(fh.read(header.shell_size)).decode()
+                return (self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.shell_size)).decode()
             except Exception as e:
                 env.logger.warning(f'Failed to decode shell: {e}')
                 return ''
@@ -680,7 +694,7 @@ class TaskFile(object):
                 return ''
             fh.seek(self.header_size + header.params_size + header.runtime_size + header.shell_size, 0)
             try:
-                return lzma.decompress(fh.read(header.pulse_size)).decode()
+                return (self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.pulse_size)).decode()
             except Exception as e:
                 env.logger.warning(f'Failed to decode pulse: {e}')
                 return ''
@@ -695,7 +709,7 @@ class TaskFile(object):
             fh.seek(self.header_size + header.params_size + header.runtime_size +
                     header.pulse_size + header.shell_size, 0)
             try:
-                return lzma.decompress(fh.read(header.stdout_size)).decode()
+                return (self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.stdout_size)).decode()
             except Exception as e:
                 env.logger.warning(f'Failed to decode stdout: {e}')
                 return ''
@@ -710,7 +724,7 @@ class TaskFile(object):
             fh.seek(self.header_size + header.params_size + header.runtime_size
                 + header.shell_size + header.pulse_size + header.stdout_size, 0)
             try:
-                return lzma.decompress(fh.read(header.stderr_size)).decode()
+                return (self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.stderr_size)).decode()
             except Exception as e:
                 env.logger.warning(f'Failed to decode stderr: {e}')
                 return ''
@@ -725,7 +739,7 @@ class TaskFile(object):
             fh.seek(self.header_size + header.params_size + header.runtime_size + header.shell_size +
                     header.pulse_size + header.stdout_size + header.stderr_size, 0)
             try:
-                return pickle.loads(lzma.decompress(fh.read(header.result_size)))
+                return pickle.loads((self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.result_size)))
             except Exception as e:
                 env.logger.warning(f'Failed to decode result: {e}')
                 return {'ret_code': 1}
@@ -741,7 +755,7 @@ class TaskFile(object):
                     header.shell_size + header.pulse_size + header.stdout_size +
                     header.stderr_size + header.result_size, 0)
             try:
-                return pickle.loads(lzma.decompress(fh.read(header.signature_size)))
+                return pickle.loads((self.decompressor if header.version >= 4 else lzma).decompress(fh.read(header.signature_size)))
             except Exception as e:
                 env.logger.warning(f'Failed to decode signature: {e}')
                 return {'ret_code': 1}

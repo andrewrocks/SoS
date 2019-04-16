@@ -104,6 +104,7 @@ setup(name="sos",
           'fasteners',
           'pyyaml',
           'pygments',
+          'zstandard',
           # for DAG, some version requires pydot, some requires pydotplus
           'networkx',
           'pydot',
